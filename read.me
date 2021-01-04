@@ -1,0 +1,30 @@
+Experiment for Ziyue's new paper
+Node Embedding initialized by author_w2v_embedding[id : key => embed : int64 numpy arraylist]
+Graph initialized by author_community[id : key => {neighbors : list, relations : list}]
+
+loss based on random walk loss
+path : 5
+negative : 3
+
+evaluating by :
+'''
+
+def evaluator(self, embs, label):
+    estimator = KMeans(n_clusters=4)
+    estimator.fit(embs)
+    label_pred = estimator.labels_
+
+    print('NMI:%.4f'%metrics.normalized_mutual_info_score(label,label_pred))
+    print('ARI:%.4f'%metrics.adjusted_rand_score(label,label_pred))
+
+    scaler=preprocessing.StandardScaler()
+    X=scaler.fit_transform(embs)
+    X=np.mat(X)
+    train_X,test_X,train_y,test_y=train_test_split(X,label,test_size=0.6)
+    model=LogisticRegression()
+    model.fit(train_X,train_y)
+    pred_y=model.predict(test_X)
+
+    print('Micro-F1:%.4f'%f1_score(test_y,pred_y,average='micro'))
+    print('Macro-F1:%.4f'%f1_score(test_y,pred_y,average='macro'))
+'''
