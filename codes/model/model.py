@@ -1,92 +1,62 @@
-"""
-Modeling Relational Data with Graph Convolutional Networks
-Paper: https://arxiv.org/abs/1703.06103
-Code: https://github.com/MichSchli/RelationPrediction
-
-Difference compared to MichSchli/RelationPrediction
-* Report raw metrics instead of filtered metrics.
-* By default, we use uniform edge sampling instead of neighbor-based edge
-  sampling used in author's code. In practice, we find it achieves similar MRR
-  probably because the model only uses one GNN layer so messages are propagated
-  among immediate neighbors. User could specify "--edge-sampler=neighbor" to switch
-  to neighbor-based edge sampling.
-"""
-
 import argparse
-import pickle
-
-import numpy as np
+import sys
 import time
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import random
-from dgl.data.knowledge_graph import load_data
 from dgl.nn.pytorch import RelGraphConv
-import sys
-sys.path.append('/home/xiaomeng/jupyter_base/KGE_RGCN_PAPER_CODE')
-from code.utils.sample_utils import *
-from code.utils.model_utils import BaseRGCN
-from code.utils.gcn_utils import get_adj_and_degrees, build_test_graph, generate_sampled_graph_and_labels, calc_mrr
 
+from codes.utils.valid_utils import evaluator
+
+sys.path.append('/home/xiaomeng/jupyter_base/author_embedding')
+
+from codes.utils.sample_utils import *
+from codes.utils.model_utils import BaseRGCN
+from codes.utils.gcn_utils import get_adj_and_degrees, build_test_graph, generate_sampled_graph_and_labels, calc_mrr
+from codes.utils.datareader import *
 
 class EmbeddingLayer(nn.Module):
-    def __init__(self, num_nodes, h_dim, embed_dict_path = "None", freeze_option = "freeze", transform_to_hdim = True):
+    def __init__(self, num_nodes, h_dim, embed_dict, freeze_option = True):
         super(EmbeddingLayer, self).__init__()
-        self.embed_dict_path = embed_dict_path
-        self.transfrom_to_hdim = transform_to_hdim
-        if embed_dict_path != "None" : # initialize with pretrain
-            with open(embed_dict_path, 'rb') as file:
-                embed_dict = pickle.load(file)
-                embed_li = []
-                for i in range(num_nodes) :
-                    embed_li.append(embed_dict[i])
-                embed_li = np.asarray(embed_li)
-                embed_li = torch.from_numpy(embed_li)
-                if freeze_option == "freeze" :
-                    self.embedding = torch.nn.Embedding.from_pretrained(embed_li)
-                elif freeze_option == "no freeze" :
-                    self.embedding = torch.nn.Embedding.from_pretrained(embed_li, False)
-                if transform_to_hdim : # init transform matrix
-                    self.transform_matrix = torch.nn.Parameter(torch.randn((self.embedding.weight.shape[1], h_dim)))
-                    nn.init.xavier_uniform_(self.transform_matrix,
-                                            gain=nn.init.calculate_gain('relu'))
-                    self.transform_bias = torch.nn.Parameter(torch.randn((num_nodes, 1)))
-                    nn.init.xavier_uniform_(self.transform_bias,
-                                            gain=nn.init.calculate_gain('relu'))
-
+        self.embed_dict = embed_dict
+        if self.embed_dict is not None :
+            embed_li = []
+            for i in range(num_nodes) :
+                embed_li.append(embed_dict[i])
+            embed_li = np.asarray(embed_li)
+            embed_li = torch.from_numpy(embed_li).float()
+            if freeze_option :
+                self.embedding = torch.nn.Embedding.from_pretrained(embed_li)
+            else :
+                self.embedding = torch.nn.Embedding.from_pretrained(embed_li, False)
         else :
             print("init from random embedding")
             self.embedding = torch.nn.Embedding(num_nodes, h_dim)
 
     def forward(self, g, h, r, norm):
-        if self.embed_dict_path == "None" or not self.transfrom_to_hdim : # no pretrain
-            return self.embedding(h.squeeze())
-        else :
-            matrix_pre = self.embedding(h.squeeze())
-            return F.relu(matrix_pre.mm(self.transform_matrix) + self.transform_bias[h.squeeze()])
+        return self.embedding(h.squeeze())
 
 class RGCN(BaseRGCN):
     def build_input_layer(self):
-        return EmbeddingLayer(self.num_nodes, self.h_dim, self.from_pretrain, self.pretrain_option, self.transform_option)
+        return EmbeddingLayer(self.num_nodes, self.h_dim, self.embed_dict, self.freeze_embedding)
 
     def build_hidden_layer(self, idx):
         act = F.relu if idx < self.num_hidden_layers - 1 else None
         return RelGraphConv(self.h_dim, self.h_dim, self.num_rels, self.regularizer,
-                self.num_bases, activation=act, self_loop=True,
+                self.num_bases, activation=act, self_loop=True, layer_norm=True,
                 dropout=self.dropout)
 
 class LinkPredict(nn.Module):
     def __init__(self, in_dim, h_dim, num_rels, regularizer = "bdd", num_bases=-1,
-                 num_hidden_layers=1, dropout=0, use_cuda=False, reg_param=0, from_pretrain = "None", pretrain_option = "freeze",
-                 transform_option = True):
+                 num_hidden_layers=1, dropout=0, use_cuda=False, reg_param=0, embed_dict = None, freeze_embedding = True):
         super(LinkPredict, self).__init__()
         self.rgcn = RGCN(in_dim, h_dim, h_dim, num_rels * 2, num_bases,
                          num_hidden_layers, dropout, use_cuda,
-                         from_pretrain = from_pretrain,
-                         pretrain_option = pretrain_option,
-                         transform_option = transform_option,
+                         embed_dict = embed_dict,
+                         freeze_embedding = freeze_embedding,
                          regularizer = regularizer)
+        self.freeze = freeze_embedding
         self.reg_param = reg_param
         self.w_relation = nn.Parameter(torch.Tensor(num_rels, h_dim))
         nn.init.xavier_uniform_(self.w_relation,
@@ -98,13 +68,17 @@ class LinkPredict(nn.Module):
         r = self.w_relation[triplets[:,1]]
         o = embedding[triplets[:,2]]
         score = torch.sum(s * r * o, dim=1)
+        # score = torch.sum(s * o, dim=1)
         return score
 
     def forward(self, g, h, r, norm):
         return self.rgcn.forward(g, h, r, norm)
 
     def regularization_loss(self, embedding):
-        return torch.mean(embedding.pow(2)) + torch.mean(self.w_relation.pow(2))
+        if not self.freeze :
+            return torch.mean(embedding.pow(2)) + torch.mean(self.w_relation.pow(2))
+        else :
+            return torch.mean(self.w_relation.pow(2))
 
     def get_loss(self, g, embed, triplets, labels):
         # triplets is a list of data samples (positive and negative)
@@ -123,19 +97,59 @@ def node_norm_to_edge_norm(g, node_norm):
 
 def main(args):
     # load graph data
+    import warnings
+    warnings.filterwarnings('ignore')
     global pool
-    data = load_data(args.dataset)
-    num_nodes = data.num_nodes
-    train_data = data.train
-    valid_data = data.valid
-    test_data = data.test
-    num_rels = data.num_rels
+    node_indice, indice_node, start_indice, triples, rel_set = init_triples('../../data/graph/author_community.pkl')
+    edges = numpy.array(triples)
+    num_to_generate = edges.shape[0]
+    choices = np.random.uniform(size=num_to_generate)
 
+    train_p = 0.4
+    valid_p = 0.1
+    test_p = 0.5
+
+    train_flag = choices <= train_p
+    test_flag = (choices > train_p) & (choices <= train_p + test_p)
+    validation_flag = choices > (train_p + test_p)
+
+    test = edges[test_flag]
+    train = edges[train_flag]
+    valid = edges[validation_flag]
+
+    train_data = train
+    valid_data = valid
+    test_data = test
+
+    num_rels = len(rel_set)
+    num_nodes = len(node_indice.items())
+
+    print("# entities: {}".format(num_nodes))
+    print("# relations: {}".format(num_rels))
+    print("# training edges: {}".format(train.shape[0]))
+    print("# validation edges: {}".format(valid.shape[0]))
+    print("# testing edges: {}".format(test.shape[0]))
+
+    embedding_dict = init_embedding('../../data/graph/author_w2v_embedding.pkl', node_indice)
+
+    valid_author = read_valid_author('../../data/classification/test_author_text_corpus.txt', node_indice)
+    node_li = []
+    label_li = []
+    for k,v in valid_author.items() :
+        node_li.append(k)
+        label_li.append(v)
+
+    eval_node = torch.from_numpy(np.asarray(node_li))
+    eval_label = np.asarray(label_li)
+
+    for k,v in embedding_dict.items() :
+        print(v.shape)
+        break
     # check cuda
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
     if use_cuda:
         torch.cuda.set_device(args.gpu)
-
+        eval_node = eval_node.cuda()
     # create model
     model = LinkPredict(num_nodes,
                         args.n_hidden,
@@ -144,7 +158,8 @@ def main(args):
                         num_hidden_layers=args.n_layers,
                         dropout=args.dropout,
                         use_cuda=use_cuda,
-                        reg_param=args.regularization)
+                        reg_param=args.regularization,
+                        embed_dict=embedding_dict)
 
     # validation and testing triplets
     valid_data = torch.LongTensor(valid_data)
@@ -161,6 +176,12 @@ def main(args):
 
     if use_cuda:
         model.cuda()
+        test_graph = test_graph.to('cuda:' + str(args.gpu))
+        test_node_id = test_node_id.cuda()
+        test_rel = test_rel.cuda()
+        test_norm = test_norm.cuda()
+        test_data = test_data.cuda()
+        valid_data = valid_data.cuda()
 
     # build adj list and calculate degrees for sampling
     adj_list, degrees = get_adj_and_degrees(num_nodes, train_data)
@@ -177,13 +198,40 @@ def main(args):
                     args.edge_sampler, max_runtime=args.n_epochs, max_worker=64)
     print('init sampler thread pool')
     # training loop
-    print("start training...")
+    print("start training loop...")
 
     epoch = 0
-    best_mrr = 0
+    best_nmi = 0
+    best_ari = 0
+    best_mif1 = 0
+    best_maf1 = 0
+
     while True:
+        if epoch % 1 == 0:
+            # perform validation on CPU because full graph is too large
+
+            #     model.cpu()
+            model.eval()
+            print("start eval")
+            embed = model(test_graph, test_node_id, test_rel, test_norm)
+            eval_embed = embed[eval_node]
+            eval_embed = eval_embed.detach().cpu().numpy()
+            NMI, ARI, MICRO_F1, MACRO_F1 = evaluator(eval_embed, eval_label)
+
+            if NMI < best_nmi or ARI < best_ari or MICRO_F1 < best_mif1 or MACRO_F1 < best_maf1:
+                if epoch >= args.n_epochs:
+                    break
+            else:
+                best_nmi = NMI
+                best_ari = ARI
+                best_mif1 = MICRO_F1
+                best_maf1 = MACRO_F1
+                # best_mrr = mrr
+                torch.save({'state_dict': model.state_dict(), 'epoch': epoch},
+                           model_state_file)
+
+
         model.train()
-        epoch += 1
         if args.edge_sampler == "neighbor" :
             # 防止队列为空
             while pool.q.empty():
@@ -198,7 +246,6 @@ def main(args):
                     num_rels, adj_list, degrees, args.negative_sample,
                     args.edge_sampler)
             print("Done edge sampling")
-
         # set node/edge feature
         node_id = torch.from_numpy(node_id).view(-1, 1).long()
         edge_type = torch.from_numpy(edge_type)
@@ -222,70 +269,75 @@ def main(args):
 
         forward_time.append(t1 - t0)
         backward_time.append(t2 - t1)
-        print("Epoch {:04d} | Loss {:.4f} | Best MRR {:.4f} | Forward {:.4f}s | Backward {:.4f}s".
-              format(epoch, loss.item(), best_mrr, forward_time[-1], backward_time[-1]))
+        print("Epoch {:04d} | Loss {:.4f} | Best NMI {:.4f} | Best ARI {:.4f} | Best MICRO-F1 {:.4f} | Best MACRO-F1 {:.4f} | Forward {:.4f}s | Backward {:.4f}s".
+              format(epoch, loss.item(), best_nmi, best_ari, best_mif1, best_maf1, forward_time[-1], backward_time[-1]))
 
         optimizer.zero_grad()
 
         # validation
-        if epoch % args.evaluate_every == 0:
-            # perform validation on CPU because full graph is too large
-            if use_cuda:
-                model.cpu()
-            model.eval()
-            print("start eval")
-            embed = model(test_graph, test_node_id, test_rel, test_norm)
-            mrr = calc_mrr(embed, model.w_relation, torch.LongTensor(train_data),
-                                 valid_data, test_data, hits=[1, 3, 10], eval_bz=args.eval_batch_size,
-                                 eval_p=args.eval_protocol)
-            # save best model
-            if mrr < best_mrr:
-                if epoch >= args.n_epochs:
-                    break
-            else:
-                best_mrr = mrr
-                torch.save({'state_dict': model.state_dict(), 'epoch': epoch},
-                           model_state_file)
-            if use_cuda:
-                model.cuda()
+
+            # if use_cuda:
+            #     model.cuda()
+        epoch += 1
+        # if epoch % args.evaluate_every == 0:
+        #     # perform validation on CPU because full graph is too large
+        #
+        #     #     model.cpu()
+        #     model.eval()
+        #     print("start eval")
+        #     mrr = calc_mrr(embed, model.w_relation, torch.LongTensor(train_data),
+        #                          test_data, valid_data, hits=[1, 3, 10], eval_bz=args.eval_batch_size,
+        #                          eval_p=args.eval_protocol)
+        #     # save best model
+        #     if mrr < best_mrr:
+        #         if epoch >= args.n_epochs:
+        #             break
+        #     else:
+        #         best_mrr = mrr
+        #         torch.save({'state_dict': model.state_dict(), 'epoch': epoch},
+        #                    model_state_file)
 
     print("training done")
     print("Mean forward time: {:4f}s".format(np.mean(forward_time)))
     print("Mean Backward time: {:4f}s".format(np.mean(backward_time)))
 
     print("\nstart testing:")
+
     # use best model checkpoint
     checkpoint = torch.load(model_state_file)
-    if use_cuda:
-        model.cpu() # test on CPU
+    # if use_cuda:
+    #     model.cpu() # test on CPU
     model.eval()
     model.load_state_dict(checkpoint['state_dict'])
     print("Using best epoch: {}".format(checkpoint['epoch']))
     embed = model(test_graph, test_node_id, test_rel, test_norm)
-    calc_mrr(embed, model.w_relation, torch.LongTensor(train_data), valid_data,
-                   test_data, hits=[1, 3, 10], eval_bz=args.eval_batch_size, eval_p=args.eval_protocol)
+    # calc_mrr(embed, model.w_relation, torch.LongTensor(train_data), valid_data,
+    #                test_data, hits=[1, 3, 10], eval_bz=args.eval_batch_size, eval_p=args.eval_protocol)
+    eval_embed = embed[eval_node]
+    eval_embed = eval_embed.detach().cpu().numpy()
+    evaluator(eval_embed, eval_label)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RGCN')
-    parser.add_argument("--dropout", type=float, default=0.2,
+    parser.add_argument("--dropout", type=float, default=0,
             help="dropout probability")
-    parser.add_argument("--n-hidden", type=int, default=500,
+    parser.add_argument("--n-hidden", type=int, default=64,
             help="number of hidden units")
-    parser.add_argument("--gpu", type=int, default=0,
+    parser.add_argument("--gpu", type=int, default=1,
             help="gpu")
-    parser.add_argument("--lr", type=float, default=1e-2,
+    parser.add_argument("--lr", type=float, default=1e-4,
             help="learning rate")
-    parser.add_argument("--n-bases", type=int, default=100,
+    parser.add_argument("--n-bases", type=int, default=4,
             help="number of weight blocks for each relation")
     parser.add_argument("--n-layers", type=int, default=2,
             help="number of propagation rounds")
-    parser.add_argument("--n-epochs", type=int, default=6000,
+    parser.add_argument("--n-epochs", type=int, default=60000,
             help="number of minimum training epochs")
     parser.add_argument("-d", "--dataset", type=str, default="FB15k-237",
             help="dataset to use")
     parser.add_argument("--eval-batch-size", type=int, default=500,
             help="batch size when evaluating")
-    parser.add_argument("--eval-protocol", type=str, default="filtered",
+    parser.add_argument("--eval-protocol", type=str, default="raw",
             help="type of evaluation protocol: 'raw' or 'filtered' mrr")
     parser.add_argument("--regularization", type=float, default=0.01,
             help="regularization weight")
@@ -297,7 +349,7 @@ if __name__ == '__main__':
             help="portion of edges used as positive sample")
     parser.add_argument("--negative-sample", type=int, default=10,
             help="number of negative samples per positive sample")
-    parser.add_argument("--evaluate-every", type=int, default=500,
+    parser.add_argument("--evaluate-every", type=int, default=100,
             help="perform evaluation every n epochs")
     parser.add_argument("--edge-sampler", type=str, default="neighbor",
             help="type of edge sampler: 'uniform' or 'neighbor'")

@@ -1,6 +1,6 @@
 """
 Utility functions for link prediction
-Most code is adapted from authors' implementation of RGCN link prediction:
+Most codes is adapted from authors' implementation of RGCN link prediction:
 https://github.com/MichSchli/RelationPrediction
 
 """
@@ -81,6 +81,47 @@ def sample_edge_uniform(adj_list, degrees, n_triplets, sample_size):
     all_edges = np.arange(n_triplets)
     return np.random.choice(all_edges, sample_size, replace=False)
 
+
+def sample_edge_random_walk(adj_list, degrees, n_triplets, sample_size):
+    edges = np.zeros((sample_size), dtype=np.int32)
+
+    # initialize
+    sample_counts = np.array([d for d in degrees])
+    picked = np.array([False for _ in range(n_triplets)])
+    seen = np.array([False for _ in degrees])
+
+    for i in range(0, sample_size):
+        weights = sample_counts * seen
+
+        if np.sum(weights) == 0:
+            weights = np.ones_like(weights)
+            weights[np.where(sample_counts == 0)] = 0
+
+        probabilities = (weights) / np.sum(weights)
+        chosen_vertex = np.random.choice(np.arange(degrees.shape[0]),
+                                         p=probabilities)
+        chosen_adj_list = adj_list[chosen_vertex]
+        seen[chosen_vertex] = True
+
+        chosen_edge = np.random.choice(np.arange(chosen_adj_list.shape[0]))
+        chosen_edge = chosen_adj_list[chosen_edge]
+        edge_number = chosen_edge[0]
+
+        while picked[edge_number]:
+            chosen_edge = np.random.choice(np.arange(chosen_adj_list.shape[0]))
+            chosen_edge = chosen_adj_list[chosen_edge]
+            edge_number = chosen_edge[0]
+
+        edges[i] = edge_number
+        other_vertex = chosen_edge[1]
+        picked[edge_number] = True
+        sample_counts[chosen_vertex] -= 1
+        sample_counts[other_vertex] -= 1
+        seen[other_vertex] = True
+
+    return edges
+
+
 def generate_sampled_graph_and_labels(triplets, sample_size, split_size,
                                       num_rels, adj_list, degrees,
                                       negative_rate, sampler="uniform"):
@@ -93,8 +134,10 @@ def generate_sampled_graph_and_labels(triplets, sample_size, split_size,
         edges = sample_edge_uniform(adj_list, degrees, len(triplets), sample_size)
     elif sampler == "neighbor":
         edges = sample_edge_neighborhood(adj_list, degrees, len(triplets), sample_size)
+    elif sampler == 'randomwalk' :
+        edges = sample_edge_random_walk(adj_list, degrees, len(triplets), sample_size)
     else:
-        raise ValueError("Sampler type must be either 'uniform' or 'neighbor'.")
+        raise ValueError("Sampler type must be either 'uniform' or 'neighbor' or 'randomwalk'.")
 
     # relabel nodes to have consecutive node ids
     edges = triplets[edges]

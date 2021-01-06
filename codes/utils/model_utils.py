@@ -4,7 +4,7 @@ import torch.nn as nn
 class BaseRGCN(nn.Module):
     def __init__(self, num_nodes, h_dim, out_dim, num_rels, num_bases,
                  num_hidden_layers=1, dropout=0,
-                 use_self_loop=False, use_cuda=False, from_pretrain = "None", pretrain_option = "freeze", transform_option = True,
+                 use_self_loop=False, use_cuda=False, embed_dict = None, freeze_embedding = True,
                  regularizer = "basis") :
         super(BaseRGCN, self).__init__()
         self.num_nodes = num_nodes
@@ -17,9 +17,8 @@ class BaseRGCN(nn.Module):
         self.use_self_loop = use_self_loop
         self.use_cuda = use_cuda
         # self
-        self.from_pretrain = from_pretrain
-        self.pretrain_option = pretrain_option
-        self.transform_option = transform_option
+        self.embed_dict = embed_dict
+        self.freeze_embedding = freeze_embedding
         self.regularizer = regularizer
         # create rgcn layers
         self.build_model()

@@ -53,6 +53,21 @@ def init_embedding(embedding_path, node_indice):
     return embedding_dict
 
 
+def read_valid_author(test_author_path, node_indice) :
+    valid_author = dict()
+    with open(test_author_path, 'r') as f:
+        line = f.readline()
+        while line:
+            line_sp = line.split('\t')
+            assert len(line_sp) == 3
+            node = line_sp[0]
+            label = int(line_sp[-1])
+            indice = node_indice[node]
+            valid_author[indice] = label
+            line = f.readline()
+    return valid_author
+
+
 if __name__ == '__main__':
     node_indice, indice_node, start_indice, triples, rel_set = init_triples('../../data/graph/author_community.pkl')
     print(len(triples))
@@ -61,3 +76,8 @@ if __name__ == '__main__':
     print(rel_set)
     embedding_dict = init_embedding('../../data/graph/author_w2v_embedding.pkl', node_indice)
     print(len(embedding_dict.items()))
+    for k,v in embedding_dict.items() :
+        print(v.shape)
+        break
+    valid_author = read_valid_author('../../data/classification/test_author_text_corpus.txt', node_indice)
+    print(len(valid_author.items()))
