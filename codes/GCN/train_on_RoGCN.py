@@ -4,7 +4,8 @@ from __future__ import print_function
 
 import dgl
 
-from utils import train_utils
+from codes.utils.sample.dglds import build_sub_graph
+from codes.utils.sample.train_utils import override_config, set_logger
 
 sys_path = "/home/xiaomeng/jupyter_base/KGE_EXPERIMENT"  # the model check point and log will save in this path
 
@@ -12,7 +13,6 @@ import sys
 
 sys.path.append(sys_path)
 
-from utils.sample.EdgeDataLoader import EdgeDataLoader
 import json
 import logging
 import os
@@ -20,16 +20,9 @@ import time
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-
-import utils.sample as samplers
 import torch.nn.functional as Fn
 import torch.functional as F
-
-from dataloader import BidirectionalOneShotIterator
-from dataloader import TrainDataset
-from utils.dglds import load_data,build_sub_graph,one_shot_iterator
-from GCN import GCN
-from utils.train_utils import *
+from GCN import EncoderRoGCN
 
 log_name = 'log/NSFC_DISTMULT_nofreeze_NSFC-F01{}.log'.format(time.time())  # log name
 
