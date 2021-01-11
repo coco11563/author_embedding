@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dgl.nn.pytorch import RelGraphConv
 
+from codes.utils.embed_opt_utils import embed_opt
 from codes.utils.valid_utils import evaluator
 
 sys.path.append('/home/xiaomeng/jupyter_base/author_embedding')
@@ -26,10 +27,7 @@ class EmbeddingLayer(nn.Module):
                 embed_li.append(embed_dict[i])
             embed_li = np.asarray(embed_li)
             embed_li = torch.from_numpy(embed_li).float()
-            if freeze_option :
-                self.embedding = torch.nn.Embedding.from_pretrained(embed_li)
-            else :
-                self.embedding = torch.nn.Embedding.from_pretrained(embed_li, False)
+            self.embedding = torch.nn.Embedding.from_pretrained(embed_li, freeze=freeze_option)
         else :
             print("init from random embedding")
             self.embedding = torch.nn.Embedding(num_nodes, h_dim)
@@ -49,7 +47,7 @@ class RGCN(BaseRGCN):
 
 class LinkPredict(nn.Module):
     def __init__(self, in_dim, h_dim, num_rels, regularizer = "bdd", num_bases=-1,
-                 num_hidden_layers=1, dropout=0, use_cuda=False, reg_param=0, embed_dict = None, freeze_embedding = True):
+                 num_hidden_layers=1, dropout=0, use_cuda=False, reg_param=0, embed_dict = None, freeze_embedding = False):
         super(LinkPredict, self).__init__()
         self.rgcn = RGCN(in_dim, h_dim, h_dim, num_rels * 2, num_bases,
                          num_hidden_layers, dropout, use_cuda,
@@ -133,6 +131,7 @@ def main(args):
     embedding_dict = init_embedding('../../data/graph/author_w2v_embedding.pkl', node_indice)
 
     valid_author = read_valid_author('../../data/classification/test_author_text_corpus.txt', node_indice)
+
     node_li = []
     label_li = []
     for k,v in valid_author.items() :
@@ -151,6 +150,9 @@ def main(args):
         torch.cuda.set_device(args.gpu)
         eval_node = eval_node.cuda()
     # create model
+    if args.pretrain is False :
+        embedding_dict = None
+
     model = LinkPredict(num_nodes,
                         args.n_hidden,
                         num_rels,
@@ -159,7 +161,9 @@ def main(args):
                         dropout=args.dropout,
                         use_cuda=use_cuda,
                         reg_param=args.regularization,
-                        embed_dict=embedding_dict)
+                        # embed_dict=embedding_dict,
+                        embed_dict=embedding_dict,
+                        freeze_embedding=args.freeze)
 
     # validation and testing triplets
     valid_data = torch.LongTensor(valid_data)
@@ -176,12 +180,14 @@ def main(args):
 
     if use_cuda:
         model.cuda()
-        test_graph = test_graph.to('cuda:' + str(args.gpu))
-        test_node_id = test_node_id.cuda()
-        test_rel = test_rel.cuda()
-        test_norm = test_norm.cuda()
-        test_data = test_data.cuda()
-        valid_data = valid_data.cuda()
+
+        # test_graph = test_graph.to('cuda:' + str(args.gpu))
+        # test_node_id = test_node_id.cuda()
+        # test_rel = test_rel.cuda()
+        # test_norm = test_norm.cuda()
+
+        # test_data = test_data.cuda()
+        # valid_data = valid_data.cuda()
 
     # build adj list and calculate degrees for sampling
     adj_list, degrees = get_adj_and_degrees(num_nodes, train_data)
@@ -209,28 +215,35 @@ def main(args):
     while True:
         if epoch % 1 == 0:
             # perform validation on CPU because full graph is too large
-
-            #     model.cpu()
             model.eval()
             print("start eval")
+            model.cpu()
             embed = model(test_graph, test_node_id, test_rel, test_norm)
+            embed = embed.detach()
             eval_embed = embed[eval_node]
-            eval_embed = eval_embed.detach().cpu().numpy()
+            eval_embed = eval_embed.numpy()
             NMI, ARI, MICRO_F1, MACRO_F1 = evaluator(eval_embed, eval_label)
 
-            if NMI < best_nmi or ARI < best_ari or MICRO_F1 < best_mif1 or MACRO_F1 < best_maf1:
+            # if NMI < best_nmi or ARI < best_ari or MICRO_F1 < best_mif1 or MACRO_F1 < best_maf1:
+            if MICRO_F1 < best_mif1 or MACRO_F1 < best_maf1:
                 if epoch >= args.n_epochs:
                     break
             else:
+                best_epoch = epoch
                 best_nmi = NMI
                 best_ari = ARI
                 best_mif1 = MICRO_F1
                 best_maf1 = MACRO_F1
                 # best_mrr = mrr
-                torch.save({'state_dict': model.state_dict(), 'epoch': epoch},
-                           model_state_file)
+                # torch.save({'state_dict': model.state_dict(), 'epoch': epoch},
+                #            model_state_file)
+            test_dict = embed_opt(embed, torch.range(0, num_nodes - 1, dtype=torch.long).cuda(), indice_node)
 
-
+            with open('rgcn_embed_{}.pkl'.format(epoch), 'wb') as f:
+                pickle.dump(test_dict, f)
+                # pickle.dump(test_dict, 'rgcn_embed.pkl')
+            if use_cuda :
+                model.cuda()
         model.train()
         if args.edge_sampler == "neighbor" :
             # 防止队列为空
@@ -269,8 +282,8 @@ def main(args):
 
         forward_time.append(t1 - t0)
         backward_time.append(t2 - t1)
-        print("Epoch {:04d} | Loss {:.4f} | Best NMI {:.4f} | Best ARI {:.4f} | Best MICRO-F1 {:.4f} | Best MACRO-F1 {:.4f} | Forward {:.4f}s | Backward {:.4f}s".
-              format(epoch, loss.item(), best_nmi, best_ari, best_mif1, best_maf1, forward_time[-1], backward_time[-1]))
+        print("Epoch {:04d} | Loss {:.4f} | Best NMI {:.4f} | Best ARI {:.4f} | Best MICRO-F1 {:.4f} | Best MACRO-F1 {:.4f} | Forward {:.4f}s | Backward {:.4f}s | Best Epoch {}".
+              format(epoch, loss.item(), best_nmi, best_ari, best_mif1, best_maf1, forward_time[-1], backward_time[-1], best_epoch))
 
         optimizer.zero_grad()
 
@@ -319,7 +332,7 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RGCN')
-    parser.add_argument("--dropout", type=float, default=0,
+    parser.add_argument("--dropout", type=float, default=0.1,
             help="dropout probability")
     parser.add_argument("--n-hidden", type=int, default=64,
             help="number of hidden units")
@@ -353,7 +366,8 @@ if __name__ == '__main__':
             help="perform evaluation every n epochs")
     parser.add_argument("--edge-sampler", type=str, default="neighbor",
             help="type of edge sampler: 'uniform' or 'neighbor'")
-
+    parser.add_argument("--freeze", type=bool, default=False)
+    parser.add_argument('--pretrain', type=bool, default=True)
     args = parser.parse_args()
     print(args)
     main(args)

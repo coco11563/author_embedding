@@ -134,8 +134,6 @@ def generate_sampled_graph_and_labels(triplets, sample_size, split_size,
         edges = sample_edge_uniform(adj_list, degrees, len(triplets), sample_size)
     elif sampler == "neighbor":
         edges = sample_edge_neighborhood(adj_list, degrees, len(triplets), sample_size)
-    elif sampler == 'randomwalk' :
-        edges = sample_edge_random_walk(adj_list, degrees, len(triplets), sample_size)
     else:
         raise ValueError("Sampler type must be either 'uniform' or 'neighbor' or 'randomwalk'.")
 
@@ -266,3 +264,7 @@ class MultiThreadSamplerPool(threading.Thread) :
             triplets, sample_size, split_size,
             num_rels, adj_list, degrees,
             negative_rate, sampler))
+
+class MultiThreadEvaluatingPool(threading.Thread) :
+    def __init__(self):
+        super(MultiThreadEvaluatingPool, self).__init__()
