@@ -6,6 +6,7 @@ from dgl import function as fn
 from dgl.utils import expand_as_pair
 import torch.nn.functional as Fn
 
+
 class EncoderRoGCN(nn.Module):
     def __init__(self, in_features, embedding_range, hidden_layer=2,
                  activation=None,
@@ -17,27 +18,27 @@ class EncoderRoGCN(nn.Module):
         self.layers = nn.ModuleList()
         if hidden_layer == 1:
             self.layers.append(EncoderRGCNLayer(norm='both', ent_drop=ent_drop, rel_drop=rel_drop,
-                                                 embedding_range=embedding_range, activation=activation,
-                                                 self_loop=self_loop,
-                                                 h_dim=in_features))
+                                                embedding_range=embedding_range, activation=activation,
+                                                self_loop=self_loop,
+                                                h_dim=in_features))
         # layer one
         else:
             self.layers.append(EncoderRGCNLayer(norm='both', ent_drop=ent_drop, rel_drop=rel_drop,
-                                                 embedding_range=embedding_range, activation=activation,
-                                                 self_loop=self_loop,
-                                                 h_dim=in_features))
+                                                embedding_range=embedding_range, activation=activation,
+                                                self_loop=self_loop,
+                                                h_dim=in_features))
             if hidden_layer > 2:
                 for _ in range(hidden_layer - 2):
                     self.layers.append(
                         EncoderRGCNLayer(norm='both', ent_drop=ent_drop, rel_drop=rel_drop,
-                                          embedding_range=embedding_range, activation=activation, self_loop=self_loop,
-                                          h_dim=in_features
-                                          ))
+                                         embedding_range=embedding_range, activation=activation, self_loop=self_loop,
+                                         h_dim=in_features
+                                         ))
             self.layers.append(EncoderRGCNLayer(norm='both', ent_drop=ent_drop, rel_drop=rel_drop,
-                                                 embedding_range=embedding_range, activation=activation,
-                                                 self_loop=self_loop,
-                                                 h_dim=in_features
-                                                 ))
+                                                embedding_range=embedding_range, activation=activation,
+                                                self_loop=self_loop,
+                                                h_dim=in_features
+                                                ))
 
     # forward for embedding
     # block 为不同层gcn的采样
@@ -48,7 +49,7 @@ class EncoderRoGCN(nn.Module):
                 x = layer(blocks[indice], x, weight)
         else:
             for layer in self.layers:
-                x = layer(blocks, x, weight, train = False)
+                x = layer(blocks, x, weight, train=False)
         return x
 
 
@@ -131,8 +132,10 @@ class EncoderRGCNLayer(nn.Module):
             if self.activation is not None:
                 rst = self.activation(rst)
             return rst
+
+
 class ScorePredictor(nn.Module):
-    def __init__(self, dist_func, sw = None):
+    def __init__(self, dist_func, sw=None):
         super(ScorePredictor, self).__init__()
         self.dist_func = dist_func
         self.sw = sw
@@ -147,20 +150,21 @@ class ScorePredictor(nn.Module):
         head = edges.src['x']
         tail = edges.dst['x']
         score = self.dist_func(head, tail, mode='single')
-        if self.sw is not None :
+        if self.sw is not None:
             sw = edges.data[self.sw]
             score = score * sw
-        # TODO: check if there exists minus sign and if gamma should be used here(jin)
         return {'score': score}
 
-def dist_func(head, tail) :
+
+def dist_func(head, tail):
     score = head * tail
     score = score.norm(dim=0)
     return score
 
-class GCN(nn.Module) :
+
+class GCN(nn.Module):
     def __init__(self, whole_graph, nentity, nrelation, hidden_dim, graph_layer_num=2,
-                 ent_ini = None, ent_drop=0, rel_drop=0, self_loop=True, graph_activation=None, freeze = False):
+                 ent_ini=None, ent_drop=0, rel_drop=0, self_loop=True, graph_activation=None, freeze=False):
         super(GCN, self).__init__()
         self.nentity = nentity
         self.nrelation = nrelation
@@ -168,7 +172,6 @@ class GCN(nn.Module) :
         self.graph_layer_num = graph_layer_num
 
         self.whole_graph = whole_graph
-
 
         self.embedding_range = nn.Parameter(
             torch.Tensor([(self.gamma.item() + self.epsilon) / hidden_dim]),
@@ -213,7 +216,7 @@ class GCN(nn.Module) :
         else:
             raise ValueError(
                 'the graph activation function should be [relu gelu sigmoid elu glu or none] but instead of {}'
-                .format(graph_activation))
+                    .format(graph_activation))
 
         self.whole_graph.ndata['feature'] = self.entity_embedding
         self.Encoder = EncoderRoGCN(self.entity_dim, self.embedding_range, self.hidden_dim,
@@ -221,13 +224,12 @@ class GCN(nn.Module) :
                                     self_loop=self_loop, ent_drop=ent_drop, rel_drop=rel_drop)
         self.predictor = ScorePredictor(dist_func)
 
-
     def compute_loss(self, pos_score, neg_score, args):
         print(neg_score.shape)
         # Margin loss
-        if args.adversarial_temperature != 0 :
+        if args.adversarial_temperature != 0:
             negative_score = (Fn.softmax(neg_score * args.adversarial_temperature).detach()
-                          * Fn.logsigmoid(-neg_score)).sum()
+                              * Fn.logsigmoid(-neg_score)).sum()
         else:
             negative_score = Fn.logsigmoid(-neg_score).sum()
         positive_score = Fn.logsigmoid(pos_score).squeeze()
@@ -303,6 +305,7 @@ class GCN(nn.Module) :
         }
 
         return log
+
 
 def main(args):
     # load graph data

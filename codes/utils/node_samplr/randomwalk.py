@@ -35,7 +35,7 @@ class RandomWalkSampler:
         traces, type = walk.random_walk(g, nodes=nids,
                                         metapath=self.metapath, length=self.length,
                                         prob=self.prob, restart_prob=self.restart_prob)
-        print('trace is', traces)
+        # print('trace is', traces)
         num_nodes = g.number_of_nodes()
         tuples = []
         labels = []
@@ -153,6 +153,13 @@ class RandomWalkSampler:
                 count[- tail - 1] = base_num
             else:
                 count[- tail - 1] += 1
+
+            if (- head - 1) not in count:
+                count[- head - 1] = base_num
+
+            if tail not in count:
+                count[tail] = base_num
+
         return count
 
     @staticmethod
@@ -193,7 +200,7 @@ class RandomWalkMultiLayerNeighborSampler(BlockSampler):
         return frontier
 
     def sample_blocks(self, g, seed_nodes, exclude_eids=None) :
-        print('seed is ', seed_nodes)
+        # print('seed is ', seed_nodes)
         blocks = []
         exclude_eids = (
             _tensor_or_dict_to_numpy(exclude_eids) if exclude_eids is not None else None)
