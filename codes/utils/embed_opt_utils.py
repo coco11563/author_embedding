@@ -1,11 +1,9 @@
 import pickle
-import torch
 
 # from codes.model.model import build_test_graph, node_norm_to_edge_norm
 # from codes.utils.datareader import init_triples, init_embedding, read_valid_author
 import numpy as np
-
-from codes.utils.valid_utils import evaluator
+import torch
 
 
 def model_reproduce(pth_path, model, *args) :

@@ -10,7 +10,8 @@ from dgl.dataloading import DataLoader, Mapping, utils, Collator, NID, distribut
 from dgl.dataloading.dataloader import _tensor_or_dict_to_numpy, _locate_eids_to_exclude, assign_block_eids
 from dgl.dataloading.pytorch import _pop_blocks_storage, _restore_blocks_storage
 from dgl.distributed import DistGraph
-from torch.utils.data import WeightedRandomSampler
+
+from codes.utils.datareader import init_triples_with_trace
 
 
 class RandomWalkSampler:
@@ -204,6 +205,8 @@ class RandomWalkMultiLayerNeighborSampler(BlockSampler):
         blocks = []
         exclude_eids = (
             _tensor_or_dict_to_numpy(exclude_eids) if exclude_eids is not None else None)
+        # seed node 是起始点
+        # 处理后seed node 是本次采样用到的全部点
         tuples, labels, subsampling_ws, seed_nodes = self.random_walk_sampler.sampler(g, seed_nodes)
         for block_id in reversed(range(self.num_layers)):
             frontier = self.sample_frontier(block_id, g, seed_nodes)
@@ -242,6 +245,18 @@ class RandomWalkMultiLayerNeighborSampler(BlockSampler):
             # Pre-generate CSR format so that it can be used in training directly
             block.create_formats_()
             blocks.insert(0, block)
+        # id inverse mapping the tuples id from blocks
+        nid = blocks[-1].ndata[NID]['_N']
+        dicts = dict()
+        for indice, id in enumerate(nid):
+            id = id.item()
+            dicts[id] = indice
+        li = []
+        for items in tuples :
+            src = dicts[items[0].item()]
+            dst = dicts[items[1].item()]
+            li.append([src, dst])
+        tuples = torch.as_tensor(li, dtype=torch.long)
         return tuples, labels, subsampling_ws, blocks
 
 class RandomWalkMultiLayerFullNeighborSampler(RandomWalkMultiLayerNeighborSampler):
@@ -344,21 +359,60 @@ class _NodeDataLoaderIter:
         return tuples, labels, subsampling_ws, input_nodes, output_nodes, blocks
 
 if __name__ == '__main__':
-    u, v = torch.tensor([0, 0, 0, 1, 1, 2, 3, 3]), torch.tensor([1, 2, 3, 3, 0, 0, 0, 1])
-    g = dgl.graph((u, v))
-    g.ndata['p'] = 1 / g.out_degrees()
-    true_trace = {2: {0}, 0: {1, 2, 3}, 1: {3, 0}, 3: {0, 1}}
-    tuples = torch.cat((u.view((-1, 1)), v.view(-1, 1)), 1)
-    base_num = 1
-    sampler = RandomWalkMultiLayerNeighborSampler([None], tuples.numpy(), base_num, neg_num=0, true_tuple=true_trace, length=2, windows=1)
-    train_nid = g.nodes()
+    # u, v = torch.tensor([0, 0, 0, 1, 1, 2, 3, 3]), torch.tensor([1, 2, 3, 3, 0, 0, 0, 1])
+    # g = dgl.graph((u, v))
+    # g.ndata['p'] = 1 / g.out_degrees()
+    # true_trace = {2: {0}, 0: {1, 2, 3}, 1: {3, 0}, 3: {0, 1}}
+    # tuples = torch.cat((u.view((-1, 1)), v.view(-1, 1)), 1)
+    # base_num = 1
+
+    node_indice, indice_node, start_indice, triples, rel_set, true_trace = init_triples_with_trace(
+        '../../../data/graph/author_community.pkl', reverse=True)
+    edges = numpy.array(triples)
+    num_to_generate = edges.shape[0]
+    choices = numpy.random.uniform(size=num_to_generate)
+
+    train_p = 0.4
+    valid_p = 0.1
+    test_p = 0.5
+
+
+
+    train_flag = choices <= train_p
+    test_flag = (choices > train_p) & (choices <= train_p + test_p)
+    validation_flag = choices > (train_p + test_p)
+
+    test = edges[test_flag]
+    train = edges[train_flag]
+    valid = edges[validation_flag]
+
+    train_dst = train[:, 2]
+    train_src = train[:, 0]
+    num_nodes = len(node_indice.items())
+
+    # print(numpy.concatenate((train_src, train_src), 1))
+    cat_dst = numpy.concatenate((train_dst, train_src))
+    cat_src = numpy.concatenate((train_src, train_dst))
+    g = dgl.graph((cat_src, cat_dst), num_nodes = num_nodes)
+
+    sampler = RandomWalkMultiLayerFullNeighborSampler(2, train[:, :2], 4, neg_num=4, true_tuple=true_trace,
+                                                      length=4, windows=2, restart_prob=0)
+
+    # g = dgl.graph((cat_src, cat_dst), num_nodes=num_nodes)
+
+    # remove isolated nodes
+    nid = g.nodes()[g.out_degrees() != 0]
     dataloader = RandomWalkNodeDataLoader(
-        g, train_nid, sampler,
-        batch_size=1, shuffle=True, drop_last=False, num_workers=4)
+        g, nid, sampler,
+        batch_size=128, shuffle=True, drop_last=False, num_workers=4)
+    i = 0
     for tuple, label, subsampling_ws, input_nodes, output_nodes, blocks in dataloader:
+        i += 1
         print(tuple)
-        print(label)
-        print(input_nodes)
-        print(output_nodes)
-        print(blocks)
-        break
+        # print(label)
+        # print(subsampling_ws)
+        # print(input_nodes)
+        # print(output_nodes)
+        # print(blocks)
+        if i > 10 :
+            break

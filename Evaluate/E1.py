@@ -272,22 +272,6 @@ if __name__ == '__main__':
         parser.add_argument("-b", "--batch_size", type=int, default=32, help="number of batch_size")
 
         args = parser.parse_args()
-        train_data, test_data, train_y, test_y = train_test_split(author_embedding, label, test_size=0.8)
-        train_data, valid_data, train_y, valid_y = train_test_split(train_data, train_y, test_size=0.5)
-        result_0 = train(args, train_data, train_y, valid_data, valid_y, test_data, test_y)
-
-        MicroF1 = result_0[0]
-        MacroF1 = result_0[1]
-        if best_Mi[0] < MicroF1:
-            print('best_MI 10/10/80 found in round {}'.format(epoch))
-            best_Mi[0] = result_0[0]
-            best_Mi[1] = result_0[1]
-            best_I_epoch[0] = epoch
-        if best_Ma[1] < MacroF1:
-            print('best_MA 10/10/80 found in round {}'.format(epoch))
-            best_Ma[0] = result_0[0]
-            best_Ma[1] = result_0[1]
-            best_A_epoch[0] = epoch
 
 
         train_data, test_data, train_y, test_y = train_test_split(author_embedding, label, test_size=0.7)
@@ -307,23 +291,5 @@ if __name__ == '__main__':
             best_Ma[2] = result_1[0]
             best_Ma[3] = result_1[1]
             best_A_epoch[1] = epoch
-
-        train_data, test_data, train_y, test_y = train_test_split(author_embedding, label, test_size=0.6)
-        train_data, valid_data, train_y, valid_y = train_test_split(train_data, train_y, test_size=0.25)
-        result_2 = train(args, train_data, train_y, valid_data, valid_y, test_data, test_y)
-
-        MicroF1 = result_2[0]
-        MacroF1 = result_2[1]
-        if best_Mi[4] < MicroF1:
-            print('best_MI 30/10/60 found in round {}'.format(epoch))
-            best_Mi[4] = result_2[0]
-            best_Mi[5] = result_2[1]
-            best_I_epoch[2] = epoch
-
-        if best_Ma[5] < MacroF1:
-            print('best_MA 30/10/60 found in round {}'.format(epoch))
-            best_Ma[4] = result_2[0]
-            best_Ma[5] = result_2[1]
-            best_A_epoch[2] = epoch
-        print('best  MI:' ,best_Mi)
-        print('best  MA:' ,best_Ma)
+        print('best  MI:', best_Mi)
+        print('best  MA:', best_Ma)

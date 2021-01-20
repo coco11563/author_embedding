@@ -44,7 +44,7 @@ def init_triples(community_path):
 
     return node_indice, indice_node, start_indice, list(triples), rel_set
 
-def init_triples_with_trace(community_path):
+def init_triples_with_trace(community_path, reverse = True):
     node_indice = dict()
     indice_node = dict()
     start_indice = 0
@@ -70,7 +70,27 @@ def init_triples_with_trace(community_path):
                     node_indice[i] = indice_
                     start_indice += 1
                 neighbor_map_list.append(indice_)
-            true_trace[indice] = set(neighbor_map_list)
+            if reverse :
+                if true_trace.__contains__(indice) :
+                    nodeset = true_trace[indice]
+                    for i in neighbor_map_list :
+                        nodeset.add(i)
+                    true_trace[indice] = nodeset
+                else :
+                    true_trace[indice] = set(neighbor_map_list)
+            else :
+                true_trace[indice] = set(neighbor_map_list)
+            if reverse :
+                for i in neighbor_map_list :
+                    if true_trace.__contains__(i) :
+                        node_set = true_trace[i]
+                        node_set.add(indice)
+                        true_trace[i] = node_set
+                    else :
+                        node_set = set()
+                        node_set.add(indice)
+                        true_trace[i] = node_set
+
             indice = numpy.repeat([indice], len(neighbor_map_list))
             rel = inform['relations']
             for i in rel:

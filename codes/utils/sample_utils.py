@@ -4,16 +4,14 @@ Most codes is adapted from authors' implementation of RGCN link prediction:
 https://github.com/MichSchli/RelationPrediction
 
 """
-from concurrent.futures.thread import ThreadPoolExecutor
-from multiprocessing import Queue, Manager
-from multiprocessing import Lock
-
-import numpy as np
-import tensorflow as tf
-import dgl
 import threading
-from queue import PriorityQueue
+from multiprocessing import Manager
 from multiprocessing import Pool
+
+import dgl
+import numpy as np
+
+
 #######################################################################
 #
 # Utility function for building training and testing graphs
