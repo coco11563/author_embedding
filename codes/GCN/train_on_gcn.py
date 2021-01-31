@@ -102,6 +102,7 @@ class GraphSAGE(nn.Module):
         # print(score.shape)
         # Margin loss
         # gpu problem triggered
+        lbd = args.lambda_parameter
         neg_mask = (labels == -1)
         pos_mask = (labels == 1)
         # print(neg_mask.shape)
@@ -115,22 +116,14 @@ class GraphSAGE(nn.Module):
         # print('pos_score', pos_score.detach().mean())
         if args.adversarial_temperature != 0:
             negative_score = (Fn.softmax(neg_score * args.adversarial_temperature).detach()
-                              * Fn.logsigmoid(-neg_score))
+                              * Fn.logsigmoid(neg_score - lbd)).mean() # neg_socre > 0
         else:
-            negative_score = Fn.logsigmoid(-neg_score)
-        positive_score = Fn.logsigmoid(pos_score).squeeze()
-
-        positive_sample_loss = - positive_score.mean()
-        negative_sample_loss = - negative_score.mean()
-        # neg_loss, pos_loss = (self.margin_loss(negative_score.view(n_edges, -1), pos_score[etype].unsqueeze(1)))
-        neg_loss = negative_sample_loss
-        pos_loss = positive_sample_loss
-        return pos_loss, neg_loss
+            negative_score = Fn.logsigmoid(neg_score - lbd).mean()
+        positive_score = - Fn.logsigmoid(lbd - pos_score).mean()
+        return positive_score, negative_score
 
     def get_loss(self, tuples, labels, blocks, args, sw = None):
         x = self.forward(blocks)
-        # print(x)
-
         score = self.pred(tuples, x, sw)
         return self.compute_loss(score, labels, args)
 
@@ -168,14 +161,20 @@ class ScorePredictor(nn.Module):
 
     def score_func(self, v1, v2):
         return self.dist_func(v1, v2)
+
 def dist_func(head, tail):
-    score = head * tail
-    score = score.norm(dim=-1)
+    # score = Fn.cosine_similarity(head, tail)
+    # print(head.shape, tail.shape)
+    score = torch.nn.functional.pairwise_distance(head, tail)
     return score
 
 def main(args):
     # load and preprocess dataset
+    sys_path = "/home/xiaomeng/jupyter_base/author_embedding"  # the model check point and log will save in this path
 
+    import sys
+
+    sys.path.append(sys_path)
     import warnings
     warnings.filterwarnings("ignore")
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -215,6 +214,8 @@ def main(args):
 
     valid_author = read_valid_author('../../data/classification/test_author_text_corpus.txt', node_indice)
 
+
+
     node_li = []
     label_li = []
     for k, v in valid_author.items():
@@ -226,7 +227,8 @@ def main(args):
     cat_dst = numpy.concatenate((train_dst, train_src))
     cat_src = numpy.concatenate((train_src, train_dst))
     g = dgl.graph((cat_src, cat_dst), num_nodes = num_nodes)
-
+    with open('graph_dump_sage.pkl', 'wb') as f :
+        pickle.dump(g,f)
     # remove isolated nodes
     nid = g.nodes()[g.out_degrees() != 0]
     model = GraphSAGE(g,
@@ -245,7 +247,7 @@ def main(args):
     # use optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    sampler = RandomWalkMultiLayerFullNeighborSampler(args.n_hidden, train[:,(0,2)], 4, neg_num=4, true_tuple=true_trace,
+    sampler = RandomWalkMultiLayerFullNeighborSampler(args.n_hidden, train[:,(0,2)], 4, neg_num=12, true_tuple=true_trace,
                                                   length=4, windows=2, restart_prob=0)
 
     if use_cuda :
@@ -255,7 +257,7 @@ def main(args):
 
     dataloader = RandomWalkNodeDataLoader(
         g, nid, sampler,
-        batch_size=128, shuffle=True, drop_last=False, num_workers=4)
+        batch_size=521, shuffle=True, drop_last=False, num_workers=0)
 
     best_epoch = 0
     best_nmi = 0
@@ -266,17 +268,20 @@ def main(args):
     it = tqdm(dataloader)
     while True:
         for path_tuple, label, subsampling_ws, _, output_nodes, blocks in it:
+
+            # print(g.ndata['feature'])
             it.set_description("GEN %i" % epoch)
+            model_state_file = '/home/xiaomeng/jupyter_base/author_embedding_mac/codes/GCN/mds/model_state_gcn_{}.pth'.format(epoch)
             model.train()
             if use_cuda :
-                blocks = [b.to(torch.device('cuda')) for b in blocks]
-                path_tuple = path_tuple.to(torch.device('cuda'))
-                label = label.to(torch.device('cuda'))
+                blocks = [b.to(torch.device('cuda:{}'.format(args.gpu))) for b in blocks]
+                path_tuple = path_tuple.to(torch.device('cuda:{}'.format(args.gpu)))
+                label = label.to(torch.device('cuda:{}'.format(args.gpu)))
                 # input_nodes = input_nodes.to(torch.device('cuda'))
-                subsampling_ws = subsampling_ws.to(torch.device('cuda'))
+                subsampling_ws = subsampling_ws.to(torch.device('cuda:{}'.format(args.gpu)))
             pos_loss, neg_loss = model.get_loss(path_tuple, label, blocks, args, subsampling_ws)
             # pos_loss, neg_loss = model.get_loss(path_tuple, label, blocks, input_nodes, args, None)
-            loss = (pos_loss + neg_loss) / 2
+            loss = pos_loss - neg_loss
             if args.L3_regularization != 0.0:
                 # Use L3 regularization for ComplEx and DistMult
                 reg_loss = model.regular_loss(args)
@@ -304,6 +309,9 @@ def main(args):
                 best_ari = ARI
                 best_mif1 = MiF1
                 best_maf1 = MaF1
+            with open(model_state_file, 'wb') as f :
+                torch.save({'state_dict': model.state_dict(), 'epoch': epoch},
+                           f)
             it.set_postfix(loss=loss.item(), bestgen=best_epoch)
             # it.set_postfix({"Best NMI" : best_nmi,"Best ARI" : best_ari, "Best MICRO-F1" : best_mif1, "Best Epoch" :
             #     best_epoch, "loss" : loss.item(), "pos_loss" : pos_loss.item(), "neg_loss" : neg_loss.item()})
@@ -316,7 +324,7 @@ def main(args):
             #     format(best_nmi, best_ari, best_mif1, best_maf1, best_epoch, loss.item(), pos_loss.item(), neg_loss.item()))
             test_dict = embed_opt(embed, torch.range(0, num_nodes - 1, dtype=torch.long).cuda(), indice_node)
             # dump for next eval!
-            with open('gcn_embed_{}.pkl'.format(epoch), 'wb') as f:
+            with open('/home/xiaomeng/jupyter_base/author_embedding_mac/codes/GCN//emb/gcn_embed_{}.pkl'.format(epoch), 'wb') as f:
                 pickle.dump(test_dict, f)
                 # pickle.dump(test_dict, 'rgcn_embed.pkl')
             if use_cuda:
@@ -330,9 +338,9 @@ if __name__ == '__main__':
     register_data_args(parser)
     parser.add_argument("--dropout", type=float, default=0.2,
                         help="dropout probability")
-    parser.add_argument("--gpu", type=int, default=-1,
+    parser.add_argument("--gpu", type=int, default=0,
                         help="gpu")
-    parser.add_argument("--lr", type=float, default=5e-3,
+    parser.add_argument("--lr", type=float, default=5e-4,
                         help="learning rate")
     parser.add_argument("--n-epochs", type=int, default=200,
                         help="number of training epochs")
@@ -344,10 +352,11 @@ if __name__ == '__main__':
                         help="number of hidden gcn layers")
     parser.add_argument("--weight-decay", type=float, default=5e-4,
                         help="Weight for L2 loss")
-    parser.add_argument("--aggregator-type", type=str, default="gcn",
+    parser.add_argument("--aggregator-type", type=str, default="mean",
                         help="Aggregator type: mean/gcn/pool/lstm")
-    parser.add_argument('-a', '--adversarial_temperature', default=1.0, type=float)
+    parser.add_argument('-a', '--adversarial_temperature', default=0, type=float)
     parser.add_argument('--L3-regularization', default=0, type=float)
+    parser.add_argument('--lambda-parameter', default=1.5, type=float)
     args = parser.parse_args()
     print(args)
 

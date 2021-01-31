@@ -253,12 +253,12 @@ if __name__ == '__main__':
     authors, label = load_data('/home/xiaomeng/jupyter_base/author_embedding/data/test_author_text_corpus.txt')
 
 
-    for i in range(200) :
+    for i in range(2000) :
         epoch = i
         print('epoch : {}'.format(epoch))
         parser = argparse.ArgumentParser()
         author_embedding = load_embedding(authors,
-                                          '/home/xiaomeng/jupyter_base/author_embedding/codes/GCN/gcn_embed_{}.pkl'.format(
+                                          '/home/xiaomeng/jupyter_base/author_embedding/codes/GCN/emb/rgcn_embed_{}.pkl'.format(
                                               epoch))
 
 
@@ -267,7 +267,7 @@ if __name__ == '__main__':
         parser.add_argument("-c", "--dataset", default= '/home/xiaomeng/jupyter_base/author_embedding/data/test_author_text_corpus.txt', type=str, help="classification dataset address")
         parser.add_argument("-e", "--epochs", type=int, default=10, help="number of epochs")
         # parser.add_argument("-v", "--embs", type=str, default='/home/xiaomeng/jupyter_base/author_embedding/codes/GCN/gcn_embed_{}.pkl'.format(epoch),help="researcher embeddings")
-        parser.add_argument("-w", "--num_workers", type=int, default=5, help="dataloader worker size")
+        parser.add_argument("-w", "--num_workers", type=int, default=0, help="dataloader worker size")
         parser.add_argument("-s", "--seq_len", type=int, default=200, help="maximum sequence len")
         parser.add_argument("-b", "--batch_size", type=int, default=32, help="number of batch_size")
 

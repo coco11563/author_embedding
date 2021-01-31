@@ -7,10 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dgl.nn.pytorch import RelGraphConv
 
+sys.path.append('/home/xiaomeng/jupyter_base/author_embedding')
+
 from codes.utils.embed_opt_utils import embed_opt
 from codes.utils.valid_utils import evaluator
-
-sys.path.append('/home/xiaomeng/jupyter_base/author_embedding')
 
 from codes.utils.sample_utils import *
 from codes.utils.model_utils import BaseRGCN
@@ -98,7 +98,7 @@ def main(args):
     import warnings
     warnings.filterwarnings('ignore')
     global pool
-    node_indice, indice_node, start_indice, triples, rel_set = init_triples('../../data/graph/author_community.pkl')
+    node_indice, indice_node, start_indice, triples, rel_set = init_triples('data/graph/author_community.pkl')
     edges = numpy.array(triples)
     num_to_generate = edges.shape[0]
     choices = np.random.uniform(size=num_to_generate)
@@ -128,9 +128,9 @@ def main(args):
     print("# validation edges: {}".format(valid.shape[0]))
     print("# testing edges: {}".format(test.shape[0]))
 
-    embedding_dict = init_embedding('../../data/graph/author_w2v_embedding.pkl', node_indice)
+    embedding_dict = init_embedding('data/graph/author_w2v_embedding.pkl', node_indice)
 
-    valid_author = read_valid_author('../../data/classification/test_author_text_corpus.txt', node_indice)
+    valid_author = read_valid_author('data/classification/test_author_text_corpus.txt', node_indice)
 
     node_li = []
     label_li = []
@@ -172,6 +172,8 @@ def main(args):
     # build test graph
     test_graph, test_rel, test_norm = build_test_graph(
         num_nodes, num_rels, train_data)
+    with open('graph_dump.pkl', 'wb') as f :
+        pickle.dump(test_graph,f)
     test_deg = test_graph.in_degrees(
                 range(test_graph.number_of_nodes())).float().view(-1,1)
     test_node_id = torch.arange(0, num_nodes, dtype=torch.long).view(-1, 1)
@@ -239,9 +241,12 @@ def main(args):
                 #            model_state_file)
             test_dict = embed_opt(embed, torch.range(0, num_nodes - 1, dtype=torch.long).cuda(), indice_node)
 
-            with open('rgcn_embed_{}.pkl'.format(epoch), 'wb') as f:
+            with open('/home/xiaomeng/jupyter_base/author_embedding/codes/GCN/emb/rgcn_embed_{}.pkl'.format(epoch), 'wb') as f:
                 pickle.dump(test_dict, f)
                 # pickle.dump(test_dict, 'rgcn_embed.pkl')
+            with open('/home/xiaomeng/jupyter_base/author_embedding/codes/GCN/mds/rgcn_model_{}.pkl'.format(epoch), 'wb') as f:
+                torch.save({'state_dict': model.state_dict(), 'epoch': epoch},
+                           f)
             if use_cuda :
                 model.cuda()
         model.train()
@@ -331,12 +336,15 @@ def main(args):
     evaluator(eval_embed, eval_label)
 
 if __name__ == '__main__':
+    # import os
+    # sys.path.remove(os.path.dirname(__file__))
+
     parser = argparse.ArgumentParser(description='RGCN')
     parser.add_argument("--dropout", type=float, default=0.1,
             help="dropout probability")
     parser.add_argument("--n-hidden", type=int, default=64,
             help="number of hidden units")
-    parser.add_argument("--gpu", type=int, default=1,
+    parser.add_argument("--gpu", type=int, default=0,
             help="gpu")
     parser.add_argument("--lr", type=float, default=1e-4,
             help="learning rate")

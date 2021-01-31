@@ -12,8 +12,8 @@ def evaluator(embs, label):
     label_pred = estimator.labels_
     NMI = metrics.normalized_mutual_info_score(label,label_pred)
     ARI = metrics.adjusted_rand_score(label,label_pred)
-    # print('NMI:%.4f'%NMI)
-    # print('ARI:%.4f'%ARI)
+    print('NMI:%.4f'%NMI)
+    print('ARI:%.4f'%ARI)
 
     scaler=preprocessing.StandardScaler()
     X=scaler.fit_transform(embs)
@@ -30,8 +30,8 @@ def evaluator(embs, label):
     a = np.array(li)
     a = np.mean(a, axis=0)
     # print(a)
-    # print('Micro-F1:%.4f'%a[0])
-    # print('Macro-F1:%.4f'%a[1])
+    print('Micro-F1:%.4f'%a[0])
+    print('Macro-F1:%.4f'%a[1])
     return NMI, ARI, a[0], a[1]
 
 
